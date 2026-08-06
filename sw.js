@@ -1,4 +1,4 @@
-const CACHE_NAME = 'stepgo-cache-v2';
+const CACHE_NAME = 'stepgo-cache-v3';
 const ASSETS = [
   './',
   './index.html',
@@ -33,11 +33,20 @@ self.addEventListener('activate', (e) => {
   );
 });
 
-// Fetch Event (Network falling back to Cache)
+// Fetch Event (Safe for API and POST requests)
 self.addEventListener('fetch', (e) => {
+  // ⚠️ IMPORTANT: Only intercept GET requests for local assets
+  // Do not intercept POST requests or external Google API calls
+  if (e.request.method !== 'GET' || !e.request.url.startsWith(self.location.origin)) {
+    return; // Let the browser handle it normally
+  }
+
   e.respondWith(
-    fetch(e.request).catch(() => {
-      return caches.match(e.request);
+    caches.match(e.request).then((cachedResponse) => {
+      if (cachedResponse) {
+        return cachedResponse;
+      }
+      return fetch(e.request);
     })
   );
 });
