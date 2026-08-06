@@ -1,0 +1,16 @@
+{
+  "short_name": "StepGo",
+  "name": "StepGo - ก้าวไปด้วยกัน",
+  "icons": [
+    {
+      "src": "icons/icon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any"
+    }
+  ],
+  "start_url": "index.html",
+  "background_color": "#090d16",
+  "theme-color": "#0f172a",
+  "display": "standalone",
+  "orientation": "portrait"
+}

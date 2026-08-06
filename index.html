@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>StepGo - ก้าวไปด้วยกัน</title>
+    
+    <!-- PWA Settings -->
+    <meta name="theme-color" content="#0f172a">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="apple-touch-icon" href="icons/icon.svg">
+    <link rel="manifest" href="manifest.json">
+    
+    <!-- Google Fonts & Tailwind-like CSS variables -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- App Header -->
+        <header class="app-header">
+            <div class="user-profile">
+                <div class="avatar-glow"></div>
+                <div class="profile-info">
+                    <span class="greeting">สวัสดีครับ 👋</span>
+                    <h2 class="user-name">นักเดินทางก้าวเดิน</h2>
+                </div>
+            </div>
+            <button id="btn-settings" class="icon-btn" aria-label="ตั้งค่า">
+                <i data-lucide="settings"></i>
+            </button>
+        </header>
+
+        <!-- Main Dashboard -->
+        <main class="main-content">
+            
+            <!-- Sensor Request Banner / Warning -->
+            <div id="sensor-permission-card" class="glass-card banner hidden">
+                <div class="banner-icon warning">
+                    <i data-lucide="shield-alert"></i>
+                </div>
+                <div class="banner-text">
+                    <h3>ต้องการเข้าถึงเซ็นเซอร์</h3>
+                    <p>กรุณาอนุญาตการใช้งานเซ็นเซอร์ความเคลื่อนไหวเพื่อเริ่มนับก้าวเดินของคุณ</p>
+                </div>
+                <button id="btn-request-permission" class="btn btn-primary btn-sm">
+                    <i data-lucide="check"></i> อนุญาตสิทธิ์
+                </button>
+            </div>
+
+            <!-- Circular Progress Counter -->
+            <div class="progress-section">
+                <div class="progress-ring-container">
+                    <svg class="progress-ring" width="280" height="280">
+                        <defs>
+                            <linearGradient id="progress-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" stop-color="#3b82f6" />
+                                <stop offset="50%" stop-color="#8b5cf6" />
+                                <stop offset="100%" stop-color="#ec4899" />
+                            </linearGradient>
+                            <linearGradient id="bg-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" stop-color="rgba(59, 130, 246, 0.05)" />
+                                <stop offset="100%" stop-color="rgba(236, 72, 153, 0.05)" />
+                            </linearGradient>
+                        </defs>
+                        <!-- Background Circle -->
+                        <circle class="progress-ring__circle-bg" stroke="rgba(255, 255, 255, 0.06)" stroke-width="16" fill="url(#bg-gradient)" r="120" cx="140" cy="140" />
+                        <!-- Progress Circle -->
+                        <circle class="progress-ring__circle" stroke="url(#progress-gradient)" stroke-width="16" stroke-linecap="round" fill="transparent" r="120" cx="140" cy="140" />
+                    </svg>
+                    
+                    <div class="progress-text-container">
+                        <span class="label">วันนี้เดินไปแล้ว</span>
+                        <span id="step-count" class="step-count">0</span>
+                        <span class="goal-label">เป้าหมาย <span id="goal-value">10,000</span> ก้าว</span>
+                    </div>
+                </div>
+                
+                <!-- Sensor Status Badge -->
+                <div class="status-badge-container">
+                    <span id="sensor-status" class="status-badge inactive">
+                        <span class="status-dot"></span>
+                        <span class="status-text">หยุดนับก้าวอยู่</span>
+                    </span>
+                </div>
+            </div>
+
+            <!-- Stats Metrics Grid -->
+            <div class="metrics-grid">
+                <div class="glass-card metric-card">
+                    <div class="metric-header">
+                        <span class="metric-icon kcal">
+                            <i data-lucide="flame"></i>
+                        </span>
+                        <span class="metric-title">เผาผลาญ</span>
+                    </div>
+                    <div class="metric-value">
+                        <span id="calories-burned">0</span>
+                        <span class="metric-unit">kcal</span>
+                    </div>
+                </div>
+
+                <div class="glass-card metric-card">
+                    <div class="metric-header">
+                        <span class="metric-icon km">
+                            <i data-lucide="map-pin"></i>
+                        </span>
+                        <span class="metric-title">ระยะทาง</span>
+                    </div>
+                    <div class="metric-value">
+                        <span id="distance-walked">0.00</span>
+                        <span class="metric-unit">km</span>
+                    </div>
+                </div>
+
+                <div class="glass-card metric-card">
+                    <div class="metric-header">
+                        <span class="metric-icon time">
+                            <i data-lucide="timer"></i>
+                        </span>
+                        <span class="metric-title">เวลาที่เดิน</span>
+                    </div>
+                    <div class="metric-value">
+                        <span id="active-time">00:00</span>
+                        <span class="metric-unit">นาที</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Primary Control Action -->
+            <div class="control-actions">
+                <button id="btn-toggle-tracking" class="btn btn-action-pulse">
+                    <i data-lucide="play" class="btn-icon"></i>
+                    <span class="btn-text">เริ่มนับก้าวเดิน</span>
+                </button>
+            </div>
+
+            <!-- Step History Section -->
+            <section class="history-section glass-card">
+                <div class="section-header">
+                    <h3><i data-lucide="bar-chart-3"></i> ประวัติย้อนหลัง 7 วัน</h3>
+                    <button id="btn-clear-history" class="text-btn">ล้างประวัติ</button>
+                </div>
+                
+                <div class="chart-container">
+                    <div class="bar-chart" id="history-chart">
+                        <!-- Chart Bars will be generated dynamically by JS -->
+                        <div class="chart-placeholder">ไม่มีข้อมูลประวัติก้าวเดิน</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Simulator Section (For testing on desktop/non-sensor devices) -->
+            <section class="simulator-section glass-card">
+                <div class="section-header collapsable" id="simulator-toggle">
+                    <h3><i data-lucide="cpu"></i> ผู้ช่วยทดสอบระบบ (Simulator)</h3>
+                    <i data-lucide="chevron-down" class="chevron-icon"></i>
+                </div>
+                <div class="simulator-body hidden" id="simulator-body">
+                    <p class="simulator-desc">เนื่องจากการตรวจจับก้าวผ่านเบราว์เซอร์จริงต้องการเซ็นเซอร์วัดความเร่งและหน้าเว็บแบบ HTTPS คุณสามารถใช้จำลองก้าวเดินที่นี่เพื่อทดสอบระบบได้:</p>
+                    <div class="simulator-controls">
+                        <button id="btn-sim-step" class="btn btn-secondary">
+                            <i data-lucide="footprints"></i> เดิน 1 ก้าว
+                        </button>
+                        <button id="btn-sim-multi" class="btn btn-secondary">
+                            <i data-lucide="zap"></i> เดิน 50 ก้าว
+                        </button>
+                        <button id="btn-sim-shake" class="btn btn-outline">
+                            <i data-lucide="smartphone-charging"></i> จำลองการเขย่าเครื่อง (+1)
+                        </button>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Settings Drawer / Modal -->
+        <div id="settings-modal" class="modal-overlay hidden">
+            <div class="modal-content glass-card">
+                <div class="modal-header">
+                    <h3><i data-lucide="sliders"></i> ตั้งค่าข้อมูลและเป้าหมาย</h3>
+                    <button id="btn-close-settings" class="icon-btn">
+                        <i data-lucide="x"></i>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label for="input-goal">เป้าหมายก้าวเดิน (ก้าว/วัน)</label>
+                        <input type="number" id="input-goal" value="10000" min="1000" step="500">
+                    </div>
+                    <div class="form-group">
+                        <label for="input-weight">น้ำหนักตัว (กิโลกรัม) <span class="input-hint">*ใช้คำนวณแคลอรี่</span></label>
+                        <input type="number" id="input-weight" value="65" min="20" max="200">
+                    </div>
+                    <div class="form-group">
+                        <label for="input-stride">ความยาวก้าว (เซนติเมตร) <span class="input-hint">*ใช้คำนวณระยะทาง</span></label>
+                        <input type="number" id="input-stride" value="70" min="30" max="150">
+                    </div>
+                    <div class="form-group alert-info-box">
+                        <i data-lucide="info"></i>
+                        <p>ข้อมูลทั้งหมดจะถูกบันทึกไว้ในเบราว์เซอร์ของเครื่องนี้เท่านั้น (LocalStorage) ไม่มีการเก็บข้อมูลส่วนบุคคลส่งไปยังเซิร์ฟเวอร์ภายนอก</p>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button id="btn-save-settings" class="btn btn-primary w-full">บันทึกการตั้งค่า</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Notification Banner -->
+        <div id="toast" class="toast hidden"></div>
+    </div>
+
+    <!-- Script Entry -->
+    <script src="app.js"></script>
+</body>
+</html>
