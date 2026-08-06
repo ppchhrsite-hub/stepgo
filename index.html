@@ -142,6 +142,19 @@
                 </button>
             </div>
 
+            <!-- Leaderboard Section -->
+            <section class="leaderboard-section glass-card">
+                <div class="section-header">
+                    <h3><i data-lucide="trophy" class="text-gold"></i> กระดานผู้นำ (Leaderboard)</h3>
+                    <span class="active-users-count" id="active-users-count">0 คนเข้าร่วม</span>
+                </div>
+                <div class="leaderboard-container">
+                    <div class="leaderboard-list" id="leaderboard-list">
+                        <div class="chart-placeholder">กำลังโหลดตารางคะแนน...</div>
+                    </div>
+                </div>
+            </section>
+
             <!-- Step History Section -->
             <section class="history-section glass-card">
                 <div class="section-header">
@@ -213,11 +226,38 @@
             </div>
         </div>
 
+        <!-- Register Drawer / Modal -->
+        <div id="register-modal" class="modal-overlay hidden">
+            <div class="modal-content glass-card">
+                <div class="modal-header">
+                    <h3><i data-lucide="user-plus"></i> ลงทะเบียนเข้าร่วมกิจกรรม</h3>
+                </div>
+                <div class="modal-body">
+                    <p class="register-desc">ยินดีต้อนรับเข้าสู่ StepGo! กรุณากรอกข้อมูลของคุณเพื่อใช้แสดงผลบนกระดานผู้นำการแข่งขัน</p>
+                    <div class="form-group">
+                        <label for="input-register-nickname">ชื่อเล่น หรือ ชื่อแสดงตัวตน</label>
+                        <input type="text" id="input-register-nickname" placeholder="เช่น พี่เอก, น้องส้ม" maxlength="15">
+                    </div>
+                    <div class="form-group">
+                        <label for="input-register-dept">แผนก หรือ ฝ่าย (ถ้ามี)</label>
+                        <input type="text" id="input-register-dept" placeholder="เช่น ฝ่ายการตลาด, ไอที" maxlength="20">
+                    </div>
+                    <div class="form-group alert-info-box">
+                        <i data-lucide="shield-check"></i>
+                        <p>ข้อมูลนี้จะนำไปแสดงบนตารางจัดอันดับสำหรับแข่งขันนับก้าวภายในกลุ่มเท่านั้น</p>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button id="btn-register-submit" class="btn btn-primary w-full">เริ่มต้นนับก้าวแข่งกัน!</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Notification Banner -->
         <div id="toast" class="toast hidden"></div>
     </div>
 
     <!-- Script Entry -->
-    <script src="app.js"></script>
+    <script type="module" src="app.js"></script>
 </body>
 </html>

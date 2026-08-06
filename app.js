@@ -1,16 +1,58 @@
-// StepGo - Pedometer Application Core JavaScript
+// StepGo - Pedometer Application Core JavaScript (Module Mode with Firebase)
+
+// Import Firebase SDKs from CDN
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js';
+import { getDatabase, ref, set, update, onValue } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js';
+
+// Firebase Configuration
+// * คุณสามารถสมัครบัญชี Firebase (ฟรี) แล้วนำคีย์ของคุณมาใส่ที่นี่เพื่อเปิดใช้งานกระดานคะแนนออนไลน์
+const firebaseConfig = {
+    apiKey: "YOUR_API_KEY",
+    authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+    databaseURL: "https://YOUR_PROJECT_ID-default-rtdb.firebaseio.com",
+    projectId: "YOUR_PROJECT_ID",
+    storageBucket: "YOUR_PROJECT_ID.appspot.com",
+    messagingSenderId: "YOUR_SENDER_ID",
+    appId: "YOUR_APP_ID"
+};
+
+let db = null;
+let firebaseActive = false;
+
+// Initialize Firebase if configured
+if (firebaseConfig.apiKey && firebaseConfig.apiKey !== "YOUR_API_KEY") {
+    try {
+        const firebaseApp = initializeApp(firebaseConfig);
+        db = getDatabase(firebaseApp);
+        firebaseActive = true;
+        console.log("Firebase Realtime Database initialized successfully!");
+    } catch (error) {
+        console.error("Failed to initialize Firebase:", error);
+    }
+} else {
+    console.warn("Using Local Demo Mode. Configure Firebase to enable online leaderboard.");
+}
 
 // App State
 const state = {
+    userId: null,
+    nickname: "",
+    department: "",
     steps: 0,
     goal: 10000,
     weight: 65,    // kg
-    stride: 70,    // cm (average walking step length)
+    stride: 70,    // cm
     isTracking: false,
     startTime: null,
     elapsedSeconds: 0,
     history: {},   // format: { "YYYY-MM-DD": steps }
 };
+
+// Sync controls
+let stepsSinceLastSync = 0;
+let lastSyncTime = 0;
+const SYNC_STEP_INTERVAL = 10; // Sync to DB every 10 steps
+const SYNC_TIME_INTERVAL = 15000; // Sync to DB every 15 seconds if steps changed
 
 // Timer handle
 let timerInterval = null;
@@ -24,12 +66,13 @@ const FILTER_ALPHA = 0.2; // Low-pass filter smoothing factor
 let smoothedAcceleration = 9.8;
 let lastStepTime = 0;
 const STEP_COOLDOWN = 330; // Min time between steps (ms)
-const STEP_THRESHOLD = 1.05; // Peak threshold factor above gravity (9.8 * 1.05 = ~10.3 m/s^2)
-const VALLEY_THRESHOLD = 0.95; // Valley reset threshold factor (9.8 * 0.95 = ~9.3 m/s^2)
+const STEP_THRESHOLD = 1.05; // Peak threshold factor above gravity
+const VALLEY_THRESHOLD = 0.95; // Valley reset threshold factor
 let isAboveThreshold = false;
 
 // DOM Elements
 const elements = {
+    userName: document.querySelector('.user-name'),
     stepCount: document.getElementById('step-count'),
     goalValue: document.getElementById('goal-value'),
     caloriesBurned: document.getElementById('calories-burned'),
@@ -46,6 +89,16 @@ const elements = {
     historyChart: document.getElementById('history-chart'),
     btnClearHistory: document.getElementById('btn-clear-history'),
     
+    // Registration Modal
+    registerModal: document.getElementById('register-modal'),
+    inputRegisterNickname: document.getElementById('input-register-nickname'),
+    inputRegisterDept: document.getElementById('input-register-dept'),
+    btnRegisterSubmit: document.getElementById('btn-register-submit'),
+    
+    // Leaderboard
+    activeUsersCount: document.getElementById('active-users-count'),
+    leaderboardList: document.getElementById('leaderboard-list'),
+
     // Inputs
     inputGoal: document.getElementById('input-goal'),
     inputWeight: document.getElementById('input-weight'),
@@ -64,17 +117,16 @@ document.addEventListener('DOMContentLoaded', () => {
     // Initialize Lucide Icons
     lucide.createIcons();
     
-    // Load data from LocalStorage
+    // Load local settings & history
     loadSettings();
     loadHistory();
     loadTodaySteps();
     
-    // Initialize UI Display
-    updateDashboardUI();
-    renderHistoryChart();
-    
     // Setup Event Listeners
     setupEventListeners();
+    
+    // Check User Profile (Register Overlay)
+    checkUserRegistration();
     
     // Check if Motion sensor is supported
     checkSensorAvailability();
@@ -92,6 +144,9 @@ function setupEventListeners() {
     elements.btnSettings.addEventListener('click', openSettings);
     elements.btnCloseSettings.addEventListener('click', closeSettings);
     elements.btnSaveSettings.addEventListener('click', saveSettings);
+    
+    // Registration button
+    elements.btnRegisterSubmit.addEventListener('click', registerUser);
     
     // Clear history
     elements.btnClearHistory.addEventListener('click', clearHistory);
@@ -118,7 +173,189 @@ function setupEventListeners() {
 }
 
 // ----------------------------------------------------
-// Core Logic: Step Tracking & Algorithm
+// User Registration & Welcome overlay
+// ----------------------------------------------------
+
+function checkUserRegistration() {
+    const savedProfile = localStorage.getItem('stepgo_profile');
+    
+    if (savedProfile) {
+        try {
+            const profile = JSON.parse(savedProfile);
+            state.userId = profile.userId;
+            state.nickname = profile.nickname;
+            state.department = profile.department || "ทั่วไป";
+            
+            // Show user profile in UI
+            elements.userName.innerText = `${state.nickname} (${state.department})`;
+            
+            // Start leaderboard updates
+            initLeaderboard();
+        } catch (e) {
+            // Error parsing profile, trigger registration
+            elements.registerModal.classList.remove('hidden');
+        }
+    } else {
+        // Show registration overlay
+        elements.registerModal.classList.remove('hidden');
+    }
+}
+
+function registerUser() {
+    const nickname = elements.inputRegisterNickname.value.trim();
+    const department = elements.inputRegisterDept.value.trim() || "ทั่วไป";
+    
+    if (nickname.length < 2) {
+        showToast('⚠️ ชื่อเล่นควรมีอย่างน้อย 2 ตัวอักษร');
+        return;
+    }
+    
+    // Create random user ID
+    const randomId = 'user_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
+    
+    state.userId = randomId;
+    state.nickname = nickname;
+    state.department = department;
+    
+    // Save locally
+    const profile = { userId: randomId, nickname, department };
+    localStorage.setItem('stepgo_profile', JSON.stringify(profile));
+    
+    // Update display
+    elements.userName.innerText = `${state.nickname} (${state.department})`;
+    
+    // Hide overlay
+    elements.registerModal.classList.add('hidden');
+    showToast('👋 ลงทะเบียนสำเร็จ! ก้าวไปด้วยกันเลย');
+    
+    // Sync newly created user details to Firebase (if active)
+    if (firebaseActive) {
+        set(ref(db, 'users/' + state.userId), {
+            nickname: state.nickname,
+            department: state.department,
+            steps: state.steps,
+            lastActive: Date.now()
+        });
+    }
+    
+    // Start leaderboard updates
+    initLeaderboard();
+}
+
+// ----------------------------------------------------
+// Firebase Realtime Leaderboard
+// ----------------------------------------------------
+
+function initLeaderboard() {
+    if (firebaseActive) {
+        // Listen to updates from all users
+        const usersRef = ref(db, 'users');
+        onValue(usersRef, (snapshot) => {
+            const data = snapshot.val();
+            if (!data) return;
+            
+            const userList = [];
+            const now = Date.now();
+            let activeCount = 0;
+            
+            for (let id in data) {
+                const user = data[id];
+                user.id = id;
+                userList.push(user);
+                
+                // Count active users in last 10 minutes
+                if (user.lastActive && (now - user.lastActive < 10 * 60 * 1000)) {
+                    activeCount++;
+                }
+            }
+            
+            // Sort by steps descending
+            userList.sort((a, b) => b.steps - a.steps);
+            
+            // Update active users badge
+            elements.activeUsersCount.innerText = `แข่งสดอยู่ ${activeCount} คน`;
+            
+            // Render leaderboard rows
+            renderLeaderboardUI(userList);
+        });
+        
+        // Initial push of today's steps to database
+        syncStepsToFirebase();
+    } else {
+        // Mock Leaderboard for Local Demo Mode
+        renderMockLeaderboard();
+        
+        // Periodic refresh of mock board to update current user steps
+        setInterval(renderMockLeaderboard, 4000);
+    }
+}
+
+function syncStepsToFirebase() {
+    if (!firebaseActive || !state.userId) return;
+    
+    update(ref(db, 'users/' + state.userId), {
+        steps: state.steps,
+        lastActive: Date.now()
+    }).then(() => {
+        console.log("Steps synced successfully:", state.steps);
+    }).catch(err => {
+        console.error("Error syncing steps to Firebase:", err);
+    });
+}
+
+function renderLeaderboardUI(users) {
+    elements.leaderboardList.innerHTML = '';
+    
+    if (users.length === 0) {
+        elements.leaderboardList.innerHTML = '<div class="chart-placeholder">ไม่มีข้อมูลการจัดอันดับ</div>';
+        return;
+    }
+    
+    // Limit to top 15 users for visual performance
+    const displayUsers = users.slice(0, 15);
+    
+    displayUsers.forEach((user, index) => {
+        const isSelf = user.id === state.userId;
+        const rank = index + 1;
+        
+        const row = document.createElement('div');
+        row.className = `leaderboard-item ${isSelf ? 'self' : ''}`;
+        
+        row.innerHTML = `
+            <div class="leaderboard-left">
+                <div class="leaderboard-rank-circle">${rank}</div>
+                <div class="leaderboard-user-info">
+                    <span class="leaderboard-user-name">${user.nickname}</span>
+                    <span class="leaderboard-user-dept">${user.department || 'ทั่วไป'}</span>
+                </div>
+            </div>
+            <div class="leaderboard-right">
+                <span class="leaderboard-item-steps">${user.steps.toLocaleString()}</span>
+                <span class="leaderboard-item-unit">ก้าว</span>
+            </div>
+        `;
+        
+        elements.leaderboardList.appendChild(row);
+    });
+}
+
+function renderMockLeaderboard() {
+    const mockUsers = [
+        { id: 'mock_1', nickname: 'พี่เอก (ก้าวบิน)', department: 'ฝ่ายขาย', steps: 12450, lastActive: Date.now() },
+        { id: 'mock_2', nickname: 'น้องส้ม (ก้าวเร็ว)', department: 'ฝ่ายการตลาด', steps: 8920, lastActive: Date.now() },
+        { id: 'mock_3', nickname: 'ก้าวเงียบ', department: 'ฝ่ายบัญชี', steps: 4890, lastActive: Date.now() },
+        { id: state.userId || 'self', nickname: state.nickname || 'คุณ (นักเดินทาง)', department: state.department || 'ทั่วไป', steps: state.steps, lastActive: Date.now() }
+    ];
+    
+    // Sort descending
+    mockUsers.sort((a, b) => b.steps - a.steps);
+    
+    elements.activeUsersCount.innerText = `โหมดสาธิต (4 คน)`;
+    renderLeaderboardUI(mockUsers);
+}
+
+// ----------------------------------------------------
+// Pedometer Core Logic & Sensor
 // ----------------------------------------------------
 
 function checkSensorAvailability() {
@@ -131,11 +368,9 @@ function checkSensorAvailability() {
     
     // Check if permission is needed (mainly iOS 13+)
     if (typeof DeviceMotionEvent.requestPermission === 'function') {
-        // Needs permission request via button
         elements.sensorPermissionCard.classList.remove('hidden');
         updateSensorStatus('inactive', 'ต้องขอสิทธิ์เข้าใช้งานเซ็นเซอร์ (iOS)');
     } else {
-        // Android or older iOS, typically doesn't need explicit requestPermission call
         updateSensorStatus('inactive', 'พร้อมเชื่อมต่อเซ็นเซอร์');
     }
 }
@@ -170,7 +405,6 @@ async function startMotionTracking() {
     };
 
     if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
-        // iOS requires validation of permission status again
         try {
             const permissionState = await DeviceMotionEvent.requestPermission();
             if (permissionState === 'granted') {
@@ -185,7 +419,6 @@ async function startMotionTracking() {
             return false;
         }
     } else if (typeof DeviceMotionEvent !== 'undefined') {
-        // Android/Other browsers
         startListener();
     } else {
         updateSensorStatus('inactive', 'นับก้าวผ่านการจำลอง (Simulator)');
@@ -204,29 +437,22 @@ function stopMotionTracking() {
     releaseWakeLock();
 }
 
-// Low-pass Filter & Peak Detection Algorithm
 function handleDeviceMotion(event) {
     let acc = event.accelerationIncludingGravity;
     if (!acc || acc.x === null) {
-        acc = event.acceleration; // fallback if gravity is already filtered by OS
+        acc = event.acceleration;
     }
     
     if (!acc || acc.x === null) return;
     
-    // 1. Calculate magnitude of the acceleration vector
     const x = acc.x;
     const y = acc.y;
     const z = acc.z;
     const magnitude = Math.sqrt(x * x + y * y + z * z);
     
-    // 2. Smooth magnitude using low pass filter
     smoothedAcceleration = FILTER_ALPHA * magnitude + (1 - FILTER_ALPHA) * smoothedAcceleration;
     
     const now = Date.now();
-    
-    // 3. Step detection based on threshold crossing and cooldown
-    // Typically gravity is ~9.8 m/s^2. 
-    // During walking, deceleration causes a peak, acceleration causes a valley.
     const peakThresh = 9.8 * STEP_THRESHOLD;
     const valleyThresh = 9.8 * VALLEY_THRESHOLD;
     
@@ -237,7 +463,6 @@ function handleDeviceMotion(event) {
             addStep(1);
         }
     } else if (smoothedAcceleration < valleyThresh) {
-        // Reset state once acceleration returns towards or below valley
         isAboveThreshold = false;
     }
 }
@@ -248,14 +473,22 @@ function handleDeviceMotion(event) {
 
 function addStep(count) {
     state.steps += count;
+    stepsSinceLastSync += count;
     
-    // Save steps
+    // Save steps locally
     saveTodaySteps();
     
     // UI update
     updateDashboardUI();
     
-    // Trigger visual feed back in SVG or toast on milestone
+    // Check auto sync requirements
+    const now = Date.now();
+    if (stepsSinceLastSync >= SYNC_STEP_INTERVAL || (now - lastSyncTime > SYNC_TIME_INTERVAL)) {
+        syncStepsToFirebase();
+        stepsSinceLastSync = 0;
+        lastSyncTime = now;
+    }
+    
     if (state.steps === state.goal) {
         showToast('🎉 ยินดีด้วย! คุณเดินบรรลุเป้าหมายแล้ว!');
     }
@@ -267,6 +500,9 @@ function toggleTracking() {
         state.isTracking = false;
         stopMotionTracking();
         stopTimer();
+        
+        // Sync final steps of this session
+        syncStepsToFirebase();
         
         // Update Button UI
         elements.btnToggleTracking.classList.remove('tracking');
@@ -295,26 +531,19 @@ function toggleTracking() {
 }
 
 function updateDashboardUI() {
-    // 1. Text elements
     elements.stepCount.innerText = state.steps.toLocaleString();
     elements.goalValue.innerText = state.goal.toLocaleString();
     
-    // 2. Metrics calculation
-    // Distance: steps * stride length (m) / 1000
     const distanceKm = (state.steps * (state.stride / 100)) / 1000;
     elements.distanceWalked.innerText = distanceKm.toFixed(2);
     
-    // Calories: approx. based on weight and steps
-    // Standard estimate: ~0.75 kcal per km per kg
     const calories = distanceKm * state.weight * 0.75;
     elements.caloriesBurned.innerText = Math.round(calories);
     
-    // 3. Circular Progress update
     const progressCircle = document.querySelector('.progress-ring__circle');
     const radius = progressCircle.r.baseVal.value;
-    const circumference = 2 * Math.PI * radius; // 753.98
+    const circumference = 2 * Math.PI * radius;
     
-    // Set dasharray first
     progressCircle.style.strokeDasharray = `${circumference} ${circumference}`;
     
     const progressPercent = Math.min((state.steps / state.goal) * 100, 100);
@@ -338,7 +567,6 @@ function stopTimer() {
         clearInterval(timerInterval);
         timerInterval = null;
     }
-    // Save timer data locally
     localStorage.setItem('stepgo_elapsed_seconds', state.elapsedSeconds);
 }
 
@@ -365,7 +593,6 @@ function getPast7Days() {
     for (let i = 6; i >= 0; i--) {
         const d = new Date();
         d.setDate(d.getDate() - i);
-        // Format to local ISO-like string YYYY-MM-DD
         const year = d.getFullYear();
         const month = String(d.getMonth() + 1).padStart(2, '0');
         const day = String(d.getDate()).padStart(2, '0');
@@ -378,7 +605,6 @@ function renderHistoryChart() {
     const past7Days = getPast7Days();
     elements.historyChart.innerHTML = '';
     
-    // Find max value in history to scale bars properly
     let maxSteps = state.goal;
     past7Days.forEach(date => {
         const steps = state.history[date] || 0;
@@ -391,11 +617,8 @@ function renderHistoryChart() {
         const steps = state.history[date] || 0;
         const dayLabel = getDayLabel(date);
         const isToday = date === todayStr;
-        
-        // Calculate height percentage (min 2% to ensure tiny line shows)
         const heightPct = Math.max((steps / maxSteps) * 100, 2);
         
-        // Create bar elements
         const barWrapper = document.createElement('div');
         barWrapper.className = `chart-bar-wrapper ${isToday ? 'today' : ''}`;
         
@@ -435,6 +658,7 @@ function clearHistory() {
         updateDashboardUI();
         updateTimerUI();
         renderHistoryChart();
+        syncStepsToFirebase();
         showToast('🗑️ ลบประวัติเรียบร้อยแล้ว');
     }
 }
@@ -459,20 +683,17 @@ function loadTodaySteps() {
         state.steps = parseInt(localStorage.getItem('stepgo_steps')) || 0;
         state.elapsedSeconds = parseInt(localStorage.getItem('stepgo_elapsed_seconds')) || 0;
     } else {
-        // It's a new day! Save yesterday's steps to history if we have any
         if (savedDate && savedDate !== '') {
             const lastSteps = parseInt(localStorage.getItem('stepgo_steps')) || 0;
             saveDayToHistory(savedDate, lastSteps);
         }
         
-        // Reset for new day
         state.steps = 0;
         state.elapsedSeconds = 0;
         localStorage.setItem('stepgo_last_date', today);
         localStorage.setItem('stepgo_steps', 0);
         localStorage.setItem('stepgo_elapsed_seconds', 0);
     }
-    // Always mirror today's steps in the history object
     state.history[today] = state.steps;
     updateTimerUI();
 }
@@ -482,7 +703,6 @@ function saveTodaySteps() {
     localStorage.setItem('stepgo_last_date', today);
     localStorage.setItem('stepgo_steps', state.steps);
     
-    // Also mirror to history so chart displays instantly
     state.history[today] = state.steps;
     localStorage.setItem('stepgo_history', JSON.stringify(state.history));
     renderHistoryChart();
@@ -511,7 +731,6 @@ function loadSettings() {
     state.weight = parseInt(localStorage.getItem('stepgo_weight')) || 65;
     state.stride = parseInt(localStorage.getItem('stepgo_stride')) || 70;
     
-    // Sync to settings inputs
     elements.inputGoal.value = state.goal;
     elements.inputWeight.value = state.weight;
     elements.inputStride.value = state.stride;
@@ -552,10 +771,10 @@ function saveSettings() {
     localStorage.setItem('stepgo_weight', state.weight);
     localStorage.setItem('stepgo_stride', state.stride);
     
-    // Save to history today's target mirror representation
     saveTodaySteps();
     updateDashboardUI();
     renderHistoryChart();
+    syncStepsToFirebase();
     
     closeSettings();
     showToast('💾 บันทึกการตั้งค่าแล้ว');
@@ -565,7 +784,6 @@ function saveSettings() {
 // Helper Utilities
 // ----------------------------------------------------
 
-// Screen Wake Lock API (keeps screen on while walking)
 async function requestWakeLock() {
     if ('wakeLock' in navigator) {
         try {
@@ -586,27 +804,23 @@ function releaseWakeLock() {
     }
 }
 
-// Sensor status badge management
 function updateSensorStatus(status, text) {
     elements.sensorStatus.className = `status-badge ${status}`;
     elements.sensorStatus.querySelector('.status-text').innerText = text;
 }
 
-// Toast utility
 function showToast(message) {
     const toast = document.getElementById('toast');
     toast.innerText = message;
-    toast.classList.add('show');
+    toast.className = 'toast show';
     
     setTimeout(() => {
-        toast.classList.remove('show');
+        toast.className = 'toast hidden';
     }, 2500);
 }
 
-// Simulator action
 function simulateSteps(count) {
     addStep(count);
-    // Add seconds to elapsed time to simulate walk time (e.g. 1.2s per step)
     state.elapsedSeconds += Math.round(count * 1.2);
     updateTimerUI();
     if (!state.isTracking) {
@@ -622,4 +836,3 @@ if ('serviceWorker' in navigator) {
             .catch(err => console.error('Service Worker registration failed:', err));
     });
 }
-
