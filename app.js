@@ -7,13 +7,14 @@ import { getDatabase, ref, set, update, onValue } from 'https://www.gstatic.com/
 // Firebase Configuration
 // * คุณสามารถสมัครบัญชี Firebase (ฟรี) แล้วนำคีย์ของคุณมาใส่ที่นี่เพื่อเปิดใช้งานกระดานคะแนนออนไลน์
 const firebaseConfig = {
-    apiKey: "YOUR_API_KEY",
-    authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-    databaseURL: "https://YOUR_PROJECT_ID-default-rtdb.firebaseio.com",
-    projectId: "YOUR_PROJECT_ID",
-    storageBucket: "YOUR_PROJECT_ID.appspot.com",
-    messagingSenderId: "YOUR_SENDER_ID",
-    appId: "YOUR_APP_ID"
+    apiKey: "AIzaSyDz-qZtQNDM2vGJPPFRPqWjh-1NcPSqCC8",
+    authDomain: "stepgo-8eea8.firebaseapp.com",
+    databaseURL: "https://stepgo-8eea8-default-rtdb.firebaseio.com",
+    projectId: "stepgo-8eea8",
+    storageBucket: "stepgo-8eea8.firebasestorage.app",
+    messagingSenderId: "153104576614",
+    appId: "1:153104576614:web:83f7ce06fed67cd433bda7",
+    measurementId: "G-MRZEX3VDBT"
 };
 
 let db = null;
