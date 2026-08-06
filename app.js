@@ -75,7 +75,7 @@ let isAboveThreshold = false;
 // Google Fit Integration Variables
 let googleTokenClient = null;
 let googleAccessToken = null;
-const GOOGLE_CLIENT_ID = "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com"; // User can configure in Google Cloud Console
+const GOOGLE_CLIENT_ID = "869780292236-7q5o3qet1rsbbjn0fe87s8gpd0u042sv.apps.googleusercontent.com"; // User can configure in Google Cloud Console
 
 // DOM Elements
 const elements = {
