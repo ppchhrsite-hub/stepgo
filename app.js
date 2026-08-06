@@ -9,7 +9,7 @@ import { getDatabase, ref, set, update, onValue } from 'https://www.gstatic.com/
 const firebaseConfig = {
     apiKey: "AIzaSyDz-qZtQNDM2vGJPPFRPqWjh-1NcPSqCC8",
     authDomain: "stepgo-8eea8.firebaseapp.com",
-    databaseURL: "https://stepgo-8eea8-default-rtdb.firebaseio.com",
+    databaseURL: "https://stepgo-8eea8-default-rtdb.asia-southeast1.firebasedatabase.app",
     projectId: "stepgo-8eea8",
     storageBucket: "stepgo-8eea8.firebasestorage.app",
     messagingSenderId: "153104576614",
