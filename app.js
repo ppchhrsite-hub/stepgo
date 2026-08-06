@@ -2,7 +2,7 @@
 
 // Import Firebase SDKs from CDN
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js';
-import { getDatabase, ref, set, update, onValue } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js';
+import { getDatabase, ref, set, update, onValue, get, child } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js';
 
 // Firebase Configuration
 // * คุณสามารถสมัครบัญชี Firebase (ฟรี) แล้วนำคีย์ของคุณมาใส่ที่นี่เพื่อเปิดใช้งานกระดานคะแนนออนไลน์
@@ -47,13 +47,14 @@ const state = {
     startTime: null,
     elapsedSeconds: 0,
     history: {},   // format: { "YYYY-MM-DD": steps }
+    myApprovals: [], // Array of approval IDs submitted by user
 };
 
 // Sync controls
 let stepsSinceLastSync = 0;
 let lastSyncTime = 0;
-const SYNC_STEP_INTERVAL = 10; // Sync to DB every 10 steps
-const SYNC_TIME_INTERVAL = 15000; // Sync to DB every 15 seconds if steps changed
+const SYNC_STEP_INTERVAL = 10;
+const SYNC_TIME_INTERVAL = 15000;
 
 // Timer handle
 let timerInterval = null;
@@ -63,13 +64,18 @@ let motionListenerActive = false;
 let wakeLock = null;
 
 // Step Detection Algorithm Parameters
-const FILTER_ALPHA = 0.2; // Low-pass filter smoothing factor
+const FILTER_ALPHA = 0.2;
 let smoothedAcceleration = 9.8;
 let lastStepTime = 0;
-const STEP_COOLDOWN = 330; // Min time between steps (ms)
-const STEP_THRESHOLD = 1.05; // Peak threshold factor above gravity
-const VALLEY_THRESHOLD = 0.95; // Valley reset threshold factor
+const STEP_COOLDOWN = 330;
+const STEP_THRESHOLD = 1.05;
+const VALLEY_THRESHOLD = 0.95;
 let isAboveThreshold = false;
+
+// Google Fit Integration Variables
+let googleTokenClient = null;
+let googleAccessToken = null;
+const GOOGLE_CLIENT_ID = "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com"; // User can configure in Google Cloud Console
 
 // DOM Elements
 const elements = {
@@ -100,7 +106,7 @@ const elements = {
     activeUsersCount: document.getElementById('active-users-count'),
     leaderboardList: document.getElementById('leaderboard-list'),
 
-    // Inputs
+    // Settings Inputs
     inputGoal: document.getElementById('input-goal'),
     inputWeight: document.getElementById('input-weight'),
     inputStride: document.getElementById('input-stride'),
@@ -111,7 +117,40 @@ const elements = {
     btnSimStep: document.getElementById('btn-sim-step'),
     btnSimMulti: document.getElementById('btn-sim-multi'),
     btnSimShake: document.getElementById('btn-sim-shake'),
+
+    // Tab Navigation
+    tabButtons: document.querySelectorAll('.tab-btn'),
+    tabPanels: document.querySelectorAll('.tab-content-panel'),
+
+    // Google Fit
+    fitConnStatus: document.getElementById('fit-conn-status'),
+    btnFitConnect: document.getElementById('btn-fit-connect'),
+    btnFitDisconnect: document.getElementById('btn-fit-disconnect'),
+    btnFitSync: document.getElementById('btn-fit-sync'),
+
+    // Screenshot Upload
+    formUploadSteps: document.getElementById('form-upload-steps'),
+    inputUploadSteps: document.getElementById('input-upload-steps'),
+    inputUploadDate: document.getElementById('input-upload-date'),
+    inputUploadFile: document.getElementById('input-upload-file'),
+    fileDropzone: document.getElementById('file-dropzone'),
+    previewContainer: document.getElementById('preview-container'),
+    imagePreview: document.getElementById('image-preview'),
+    btnClearPreview: document.getElementById('btn-clear-preview'),
+    myApprovalsList: document.getElementById('my-approvals-list'),
+
+    // Admin Panel
+    adminAuthCard: document.getElementById('admin-auth-card'),
+    inputAdminPassword: document.getElementById('input-admin-password'),
+    btnAdminLogin: document.getElementById('btn-admin-login'),
+    btnAdminLogout: document.getElementById('btn-admin-logout'),
+    adminDashboardView: document.getElementById('admin-dashboard-view'),
+    adminPendingList: document.getElementById('admin-pending-list'),
 };
+
+// Admin Session State
+let isAdminAuthenticated = false;
+let uploadedImageBase64 = null;
 
 // Initialize Application
 document.addEventListener('DOMContentLoaded', () => {
@@ -122,6 +161,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadSettings();
     loadHistory();
     loadTodaySteps();
+    loadMyApprovals();
     
     // Setup Event Listeners
     setupEventListeners();
@@ -131,6 +171,15 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Check if Motion sensor is supported
     checkSensorAvailability();
+
+    // Set today's date in upload form
+    elements.inputUploadDate.value = getTodayDateString();
+
+    // Check Google Fit cached token
+    checkGoogleFitToken();
+
+    // Initialize Google Fit Token Client (if SDK loaded)
+    setTimeout(initGoogleFitAuth, 1000);
 });
 
 // Event Listeners Setup
@@ -152,6 +201,25 @@ function setupEventListeners() {
     // Clear history
     elements.btnClearHistory.addEventListener('click', clearHistory);
     
+    // Tab Navigation setup
+    elements.tabButtons.forEach(btn => {
+        btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+    });
+
+    // Google Fit Connect & Sync
+    elements.btnFitConnect.addEventListener('click', connectGoogleFit);
+    elements.btnFitDisconnect.addEventListener('click', disconnectGoogleFit);
+    elements.btnFitSync.addEventListener('click', syncGoogleFitSteps);
+
+    // Screenshot file upload handlers
+    elements.inputUploadFile.addEventListener('change', handleFileSelect);
+    elements.btnClearPreview.addEventListener('click', clearImagePreview);
+    elements.formUploadSteps.addEventListener('submit', handleUploadSubmit);
+
+    // Admin login / logout
+    elements.btnAdminLogin.addEventListener('click', handleAdminLogin);
+    elements.btnAdminLogout.addEventListener('click', handleAdminLogout);
+
     // Simulator collapsible toggle
     elements.simulatorToggle.addEventListener('click', () => {
         elements.simulatorBody.classList.toggle('hidden');
@@ -174,6 +242,38 @@ function setupEventListeners() {
 }
 
 // ----------------------------------------------------
+// Tab Navigation Controller
+// ----------------------------------------------------
+
+function switchTab(tabId) {
+    // Update buttons
+    elements.tabButtons.forEach(btn => {
+        if (btn.dataset.tab === tabId) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
+        }
+    });
+
+    // Update panels
+    elements.tabPanels.forEach(panel => {
+        if (panel.id === tabId) {
+            panel.classList.remove('hidden');
+        } else {
+            panel.classList.add('hidden');
+        }
+    });
+
+    // Run actions based on tab entering
+    if (tabId === 'tab-admin' && isAdminAuthenticated) {
+        listenToPendingApprovals();
+    }
+    if (tabId === 'tab-upload') {
+        renderMyApprovalsList();
+    }
+}
+
+// ----------------------------------------------------
 // User Registration & Welcome overlay
 // ----------------------------------------------------
 
@@ -193,11 +293,9 @@ function checkUserRegistration() {
             // Start leaderboard updates
             initLeaderboard();
         } catch (e) {
-            // Error parsing profile, trigger registration
             elements.registerModal.classList.remove('hidden');
         }
     } else {
-        // Show registration overlay
         elements.registerModal.classList.remove('hidden');
     }
 }
@@ -211,25 +309,18 @@ function registerUser() {
         return;
     }
     
-    // Create random user ID
     const randomId = 'user_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
-    
     state.userId = randomId;
     state.nickname = nickname;
     state.department = department;
     
-    // Save locally
     const profile = { userId: randomId, nickname, department };
     localStorage.setItem('stepgo_profile', JSON.stringify(profile));
     
-    // Update display
     elements.userName.innerText = `${state.nickname} (${state.department})`;
-    
-    // Hide overlay
     elements.registerModal.classList.add('hidden');
     showToast('👋 ลงทะเบียนสำเร็จ! ก้าวไปด้วยกันเลย');
     
-    // Sync newly created user details to Firebase (if active)
     if (firebaseActive) {
         set(ref(db, 'users/' + state.userId), {
             nickname: state.nickname,
@@ -239,7 +330,6 @@ function registerUser() {
         });
     }
     
-    // Start leaderboard updates
     initLeaderboard();
 }
 
@@ -249,7 +339,6 @@ function registerUser() {
 
 function initLeaderboard() {
     if (firebaseActive) {
-        // Listen to updates from all users
         const usersRef = ref(db, 'users');
         onValue(usersRef, (snapshot) => {
             const data = snapshot.val();
@@ -264,29 +353,19 @@ function initLeaderboard() {
                 user.id = id;
                 userList.push(user);
                 
-                // Count active users in last 10 minutes
                 if (user.lastActive && (now - user.lastActive < 10 * 60 * 1000)) {
                     activeCount++;
                 }
             }
             
-            // Sort by steps descending
             userList.sort((a, b) => b.steps - a.steps);
-            
-            // Update active users badge
             elements.activeUsersCount.innerText = `แข่งสดอยู่ ${activeCount} คน`;
-            
-            // Render leaderboard rows
             renderLeaderboardUI(userList);
         });
         
-        // Initial push of today's steps to database
         syncStepsToFirebase();
     } else {
-        // Mock Leaderboard for Local Demo Mode
         renderMockLeaderboard();
-        
-        // Periodic refresh of mock board to update current user steps
         setInterval(renderMockLeaderboard, 4000);
     }
 }
@@ -300,7 +379,7 @@ function syncStepsToFirebase() {
     }).then(() => {
         console.log("Steps synced successfully:", state.steps);
     }).catch(err => {
-        console.error("Error syncing steps to Firebase:", err);
+        console.error("Error syncing steps:", err);
     });
 }
 
@@ -312,7 +391,6 @@ function renderLeaderboardUI(users) {
         return;
     }
     
-    // Limit to top 15 users for visual performance
     const displayUsers = users.slice(0, 15);
     
     displayUsers.forEach((user, index) => {
@@ -348,11 +426,601 @@ function renderMockLeaderboard() {
         { id: state.userId || 'self', nickname: state.nickname || 'คุณ (นักเดินทาง)', department: state.department || 'ทั่วไป', steps: state.steps, lastActive: Date.now() }
     ];
     
-    // Sort descending
     mockUsers.sort((a, b) => b.steps - a.steps);
-    
     elements.activeUsersCount.innerText = `โหมดสาธิต (4 คน)`;
     renderLeaderboardUI(mockUsers);
+}
+
+// ----------------------------------------------------
+// Google Fit Integration
+// ----------------------------------------------------
+
+function initGoogleFitAuth() {
+    if (typeof google === 'undefined') {
+        console.log("Waiting for Google Identity Services SDK to load...");
+        return;
+    }
+    
+    try {
+        googleTokenClient = google.accounts.oauth2.initTokenClient({
+            client_id: GOOGLE_CLIENT_ID,
+            scope: 'https://www.googleapis.com/auth/fitness.activity.read',
+            callback: (tokenResponse) => {
+                if (tokenResponse && tokenResponse.access_token) {
+                    googleAccessToken = tokenResponse.access_token;
+                    localStorage.setItem('stepgo_google_token', googleAccessToken);
+                    updateGoogleFitStatus(true);
+                    showToast('🔓 เชื่อมต่อ Google Fit สำเร็จ!');
+                    syncGoogleFitSteps();
+                }
+            },
+        });
+        console.log("Google Fit Token Client initialized.");
+    } catch (e) {
+        console.error("Error initializing Google Fit:", e);
+    }
+}
+
+function checkGoogleFitToken() {
+    const token = localStorage.getItem('stepgo_google_token');
+    if (token) {
+        googleAccessToken = token;
+        updateGoogleFitStatus(true);
+    } else {
+        updateGoogleFitStatus(false);
+    }
+}
+
+function updateGoogleFitStatus(isConnected) {
+    const badge = elements.fitConnStatus;
+    if (isConnected) {
+        badge.className = "status-badge active";
+        badge.querySelector('.status-text').innerText = "เชื่อมต่อแล้ว";
+        elements.btnFitConnect.classList.add('hidden');
+        elements.btnFitSync.classList.remove('hidden');
+        elements.btnFitDisconnect.classList.remove('hidden');
+    } else {
+        badge.className = "status-badge inactive";
+        badge.querySelector('.status-text').innerText = "ยังไม่เชื่อมต่อ";
+        elements.btnFitConnect.classList.remove('hidden');
+        elements.btnFitSync.classList.add('hidden');
+        elements.btnFitDisconnect.classList.add('hidden');
+    }
+}
+
+function connectGoogleFit() {
+    if (GOOGLE_CLIENT_ID === "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com") {
+        showToast('⚠️ กรุณาตั้งค่า Google Client ID ในแอปก่อน');
+        // We will prompt them that they can run it, but for demo we can mock connect too
+        const mockAuth = confirm("ระบบกำลังอยู่ในโหมดจำลอง Client ID ต้องการเชื่อมต่อ Google Fit จำลองหรือไม่?");
+        if (mockAuth) {
+            googleAccessToken = "mock_token_" + Date.now();
+            localStorage.setItem('stepgo_google_token', googleAccessToken);
+            updateGoogleFitStatus(true);
+            showToast('🔓 เชื่อมต่อ Google Fit จำลองสำเร็จ!');
+        }
+        return;
+    }
+
+    if (googleTokenClient) {
+        googleTokenClient.requestAccessToken({ prompt: 'consent' });
+    } else {
+        showToast('⚠️ Google SDK ยังไม่พร้อมใช้งาน');
+    }
+}
+
+function disconnectGoogleFit() {
+    localStorage.removeItem('stepgo_google_token');
+    googleAccessToken = null;
+    updateGoogleFitStatus(false);
+    showToast('🔌 ตัดการเชื่อมต่อ Google Fit แล้ว');
+}
+
+function syncGoogleFitSteps() {
+    if (!googleAccessToken) {
+        showToast('⚠️ กรุณาเชื่อมต่อบัญชีก่อนซิงค์');
+        return;
+    }
+
+    // If it's a mock token, let's mock sync
+    if (googleAccessToken.startsWith("mock_token_")) {
+        const randomSteps = Math.floor(Math.random() * 4000) + 4000;
+        addStep(randomSteps - state.steps > 0 ? randomSteps - state.steps : 150);
+        showToast(`🔄 ซิงค์ยอดก้าวสำเร็จ! (จำลอง: ${state.steps.toLocaleString()} ก้าว)`);
+        return;
+    }
+
+    showToast('🔄 กำลังซิงค์ข้อมูลก้าวเดิน...');
+
+    // Calculate time window for today (Local Midnight to Now)
+    const midnight = new Date();
+    midnight.setHours(0,0,0,0);
+    const startTimeMillis = midnight.getTime();
+    const endTimeMillis = Date.now();
+
+    // Query Google Fit API aggregate steps delta
+    fetch('https://www.googleapis.com/fitness/v1/users/me/dataset/aggregate', {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${googleAccessToken}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            "aggregateBy": [{
+                "dataTypeName": "com.google.step_count.delta",
+                "dataSourceId": "derived:com.google.step_count.delta:com.google.android.gms:estimated_steps"
+            }],
+            "bucketByTime": { "durationMillis": 86400000 },
+            "startTimeMillis": startTimeMillis,
+            "endTimeMillis": endTimeMillis
+        })
+    })
+    .then(response => {
+        if (!response.ok) {
+            if (response.status === 401) {
+                // Token expired
+                disconnectGoogleFit();
+                throw new Error("หมดอายุสิทธิ์การใช้งาน กรุณาเชื่อมต่อใหม่อีกครั้ง");
+            }
+            throw new Error("เซิร์ฟเวอร์ Google Fit ไม่ตอบสนอง");
+        }
+        return response.json();
+    })
+    .then(data => {
+        // Extract total step count
+        let totalSteps = 0;
+        if (data.bucket && data.bucket[0] && data.bucket[0].dataset && data.bucket[0].dataset[0]) {
+            const points = data.bucket[0].dataset[0].point;
+            if (points && points.length > 0) {
+                points.forEach(point => {
+                    if (point.value && point.value[0]) {
+                        totalSteps += point.value[0].intVal || 0;
+                    }
+                });
+            }
+        }
+        
+        if (totalSteps > state.steps) {
+            const addedSteps = totalSteps - state.steps;
+            addStep(addedSteps);
+            showToast(`🔄 ซิงค์ก้าวสำเร็จ! ยอดรวมวันนี้: ${totalSteps.toLocaleString()} ก้าว`);
+        } else if (totalSteps > 0 && totalSteps <= state.steps) {
+            showToast(`🔄 ข้อมูลอัปเดตเป็นปัจจุบันแล้ว (${state.steps.toLocaleString()} ก้าว)`);
+        } else {
+            showToast('⚠️ ไม่พบข้อมูลการเดินวันนี้ใน Google Fit');
+        }
+    })
+    .catch(error => {
+        console.error("Google Fit Sync Error:", error);
+        showToast(`❌ เกิดข้อผิดพลาด: ${error.message}`);
+    });
+}
+
+// ----------------------------------------------------
+// Screenshot Upload & Compression
+// ----------------------------------------------------
+
+function handleFileSelect(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+        showToast('⚠️ กรุณาเลือกอัปโหลดไฟล์รูปภาพหลักฐานเท่านั้น');
+        return;
+    }
+
+    showToast('🖼️ กำลังประมวลผลและลดขนาดภาพ...');
+
+    // Compress image to Base64 (max 500px width for DB storage efficiency)
+    compressImage(file, (compressedBase64) => {
+        uploadedImageBase64 = compressedBase64;
+        
+        // Show Preview
+        elements.imagePreview.src = compressedBase64;
+        elements.previewContainer.classList.remove('hidden');
+        elements.fileDropzone.classList.add('hidden');
+        showToast('✅ ประมวลผลหลักฐานเสร็จสมบูรณ์');
+    });
+}
+
+function compressImage(file, callback) {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target.result;
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            const max_width = 500;
+            const scale = max_width / img.width;
+            
+            canvas.width = max_width;
+            canvas.height = img.height * scale;
+            
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            
+            // Output as compressed JPEG (70% quality)
+            const compressedUrl = canvas.toDataURL('image/jpeg', 0.7);
+            callback(compressedUrl);
+        };
+    };
+}
+
+function clearImagePreview() {
+    elements.inputUploadFile.value = '';
+    elements.imagePreview.src = '';
+    elements.previewContainer.classList.add('hidden');
+    elements.fileDropzone.classList.remove('hidden');
+    uploadedImageBase64 = null;
+}
+
+function handleUploadSubmit(event) {
+    event.preventDefault();
+
+    const stepsInput = parseInt(elements.inputUploadSteps.value);
+    const dateInput = elements.inputUploadDate.value;
+
+    if (isNaN(stepsInput) || stepsInput <= 0) {
+        showToast('⚠️ กรุณากรอกจำนวนก้าวที่ถูกต้อง');
+        return;
+    }
+
+    if (!dateInput) {
+        showToast('⚠️ กรุณาระบุวันที่ที่ต้องการบันทึก');
+        return;
+    }
+
+    if (!uploadedImageBase64) {
+        showToast('⚠️ กรุณาเลือกไฟล์รูปภาพหลักฐานก่อนส่ง');
+        return;
+    }
+
+    // Construct approval object
+    const approvalId = 'approval_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
+    const payload = {
+        userId: state.userId,
+        nickname: state.nickname,
+        department: state.department,
+        steps: stepsInput,
+        date: dateInput,
+        imageUrl: uploadedImageBase64,
+        status: "pending",
+        timestamp: Date.now()
+    };
+
+    if (firebaseActive) {
+        showToast('⏳ กำลังอัปโหลดข้อมูลคำขอ...');
+        set(ref(db, 'approvals/' + approvalId), payload)
+            .then(() => {
+                // Save approval ID locally to display status to this user
+                state.myApprovals.push(approvalId);
+                localStorage.setItem('stepgo_my_approvals', JSON.stringify(state.myApprovals));
+                
+                // Clear Form
+                elements.inputUploadSteps.value = '';
+                clearImagePreview();
+                showToast('📤 ส่งหลักฐานให้แอดมินเรียบร้อยแล้ว');
+                
+                // Refresh list
+                renderMyApprovalsList();
+            })
+            .catch(err => {
+                console.error("Upload error:", err);
+                showToast('❌ อัปโหลดล้มเหลว กรุณาลองใหม่');
+            });
+    } else {
+        // Local simulation fallback
+        showToast('⏳ จำลองการอัปโหลดข้อมูล (โหมดสาธิต)...');
+        setTimeout(() => {
+            state.myApprovals.push(approvalId);
+            localStorage.setItem('stepgo_my_approvals', JSON.stringify(state.myApprovals));
+            
+            // Save mock data locally to simulate DB
+            const mockDb = JSON.parse(localStorage.getItem('stepgo_mock_approvals') || '{}');
+            mockDb[approvalId] = payload;
+            localStorage.setItem('stepgo_mock_approvals', JSON.stringify(mockDb));
+            
+            elements.inputUploadSteps.value = '';
+            clearImagePreview();
+            showToast('📤 ส่งหลักฐานจำลองสำเร็จ (โปรดเข้าแท็บแอดมินเพื่อกดอนุมัติ)');
+            
+            renderMyApprovalsList();
+        }, 1000);
+    }
+}
+
+function loadMyApprovals() {
+    const saved = localStorage.getItem('stepgo_my_approvals');
+    if (saved) {
+        try {
+            state.myApprovals = JSON.parse(saved);
+        } catch (e) {
+            state.myApprovals = [];
+        }
+    }
+}
+
+function renderMyApprovalsList() {
+    elements.myApprovalsList.innerHTML = '';
+
+    if (state.myApprovals.length === 0) {
+        elements.myApprovalsList.innerHTML = '<div class="chart-placeholder">ไม่มีประวัติการส่งคำขอของคุณ</div>';
+        return;
+    }
+
+    if (firebaseActive) {
+        // Query status from Firebase
+        elements.myApprovalsList.innerHTML = '<div class="chart-placeholder">กำลังอัปเดตสถานะ...</div>';
+        const approvalsRef = ref(db, 'approvals');
+        get(approvalsRef).then(snapshot => {
+            elements.myApprovalsList.innerHTML = '';
+            const data = snapshot.val() || {};
+            
+            const renderList = [];
+            state.myApprovals.forEach(id => {
+                if (data[id]) {
+                    renderList.push(data[id]);
+                }
+            });
+
+            if (renderList.length === 0) {
+                elements.myApprovalsList.innerHTML = '<div class="chart-placeholder">ไม่มีประวัติการส่งคำขอของคุณ</div>';
+                return;
+            }
+
+            // Sort newest first
+            renderList.sort((a, b) => b.timestamp - a.timestamp);
+
+            renderList.forEach(item => {
+                const row = document.createElement('div');
+                row.className = 'approval-item';
+                
+                const statusLabels = {
+                    'pending': 'รออนุมัติ',
+                    'approved': 'อนุมัติแล้ว',
+                    'rejected': 'ถูกปฏิเสธ'
+                };
+
+                row.innerHTML = `
+                    <div class="approval-item-left">
+                        <span class="approval-item-steps">${item.steps.toLocaleString()} ก้าว</span>
+                        <span class="approval-item-date">${item.date}</span>
+                    </div>
+                    <span class="badge ${item.status}">${statusLabels[item.status]}</span>
+                `;
+                elements.myApprovalsList.appendChild(row);
+            });
+        });
+    } else {
+        // Local simulation fallback
+        const mockDb = JSON.parse(localStorage.getItem('stepgo_mock_approvals') || '{}');
+        const renderList = [];
+        state.myApprovals.forEach(id => {
+            if (mockDb[id]) {
+                renderList.push(mockDb[id]);
+            }
+        });
+
+        if (renderList.length === 0) {
+            elements.myApprovalsList.innerHTML = '<div class="chart-placeholder">ไม่มีประวัติการส่งคำขอของคุณ</div>';
+            return;
+        }
+
+        renderList.sort((a, b) => b.timestamp - a.timestamp);
+
+        renderList.forEach(item => {
+            const row = document.createElement('div');
+            row.className = 'approval-item';
+            
+            const statusLabels = {
+                'pending': 'รออนุมัติ',
+                'approved': 'อนุมัติแล้ว',
+                'rejected': 'ถูกปฏิเสธ'
+            };
+
+            row.innerHTML = `
+                <div class="approval-item-left">
+                    <span class="approval-item-steps">${item.steps.toLocaleString()} ก้าว</span>
+                    <span class="approval-item-date">${item.date}</span>
+                </div>
+                <span class="badge ${item.status}">${statusLabels[item.status]}</span>
+            `;
+            elements.myApprovalsList.appendChild(row);
+        });
+    }
+}
+
+// ----------------------------------------------------
+// Admin Panel Dashboard (Actions)
+// ----------------------------------------------------
+
+function handleAdminLogin() {
+    const pw = elements.inputAdminPassword.value;
+    // Default password "admin1234"
+    if (pw === "admin1234") {
+        isAdminAuthenticated = true;
+        elements.adminAuthCard.classList.add('hidden');
+        elements.adminDashboardView.classList.remove('hidden');
+        elements.inputAdminPassword.value = '';
+        showToast('🔓 เข้าสู่ระบบแอดมินสำเร็จ!');
+        listenToPendingApprovals();
+    } else {
+        showToast('❌ รหัสผ่านไม่ถูกต้อง');
+    }
+}
+
+function handleAdminLogout() {
+    isAdminAuthenticated = false;
+    elements.adminDashboardView.classList.add('hidden');
+    elements.adminAuthCard.classList.remove('hidden');
+    showToast('🔒 ออกจากระบบแอดมินแล้ว');
+}
+
+let pendingApprovalsListener = null;
+
+function listenToPendingApprovals() {
+    if (firebaseActive) {
+        const approvalsRef = ref(db, 'approvals');
+        
+        onValue(approvalsRef, (snapshot) => {
+            if (!isAdminAuthenticated) return;
+            
+            const data = snapshot.val() || {};
+            const pendingList = [];
+            
+            for (let id in data) {
+                if (data[id].status === 'pending') {
+                    const item = data[id];
+                    item.id = id;
+                    pendingList.push(item);
+                }
+            }
+            
+            // Sort oldest first (FIFO queue)
+            pendingList.sort((a, b) => a.timestamp - b.timestamp);
+            renderAdminPendingList(pendingList);
+        });
+    } else {
+        // Local simulation fallback
+        const mockDb = JSON.parse(localStorage.getItem('stepgo_mock_approvals') || '{}');
+        const pendingList = [];
+        for (let id in mockDb) {
+            if (mockDb[id].status === 'pending') {
+                const item = mockDb[id];
+                item.id = id;
+                pendingList.push(item);
+            }
+        }
+        pendingList.sort((a, b) => a.timestamp - b.timestamp);
+        renderAdminPendingList(pendingList);
+    }
+}
+
+function renderAdminPendingList(list) {
+    elements.adminPendingList.innerHTML = '';
+    
+    if (list.length === 0) {
+        elements.adminPendingList.innerHTML = '<div class="chart-placeholder">ไม่มีคำขอที่ค้างอนุมัติ</div>';
+        return;
+    }
+
+    list.forEach(item => {
+        const card = document.createElement('div');
+        card.className = 'admin-approval-card';
+        
+        card.innerHTML = `
+            <div class="admin-card-header">
+                <div class="admin-user-details">
+                    <span class="admin-user-title">${item.nickname}</span>
+                    <span class="admin-user-sub">${item.department}</span>
+                </div>
+                <div class="admin-steps-claim">
+                    <span class="admin-steps-value">${item.steps.toLocaleString()} ก้าว</span>
+                    <span class="admin-steps-date">วันที่: ${item.date}</span>
+                </div>
+            </div>
+            <div class="admin-card-body">
+                <img src="${item.imageUrl}" class="admin-approval-image" alt="หลักฐาน" onclick="window.open(this.src)">
+            </div>
+            <div class="admin-card-actions">
+                <button class="btn btn-outline btn-sm btn-reject" data-id="${item.id}">ปฏิเสธ</button>
+                <button class="btn btn-primary btn-sm btn-approve" data-id="${item.id}" data-user="${item.userId}" data-steps="${item.steps}" data-date="${item.date}">อนุมัติ</button>
+            </div>
+        `;
+        
+        // Add button event listeners
+        card.querySelector('.btn-reject').addEventListener('click', (e) => rejectApproval(e.target.dataset.id));
+        card.querySelector('.btn-approve').addEventListener('click', (e) => {
+            const ds = e.target.dataset;
+            approveApproval(ds.id, ds.user, parseInt(ds.steps), ds.date);
+        });
+
+        elements.adminPendingList.appendChild(card);
+    });
+}
+
+function approveApproval(id, userId, steps, date) {
+    showToast('⏳ กำลังอนุมัติและปรับคะแนน...');
+    
+    if (firebaseActive) {
+        // 1. Update status of the approval request
+        update(ref(db, 'approvals/' + id), { status: 'approved' })
+            .then(() => {
+                // 2. Fetch the target user's current steps from Firebase
+                const userStepsRef = ref(db, `users/${userId}/steps`);
+                return get(userStepsRef);
+            })
+            .then(snapshot => {
+                const currentSteps = snapshot.val() || 0;
+                // Add the approved steps to the user's total steps count in Firebase
+                const newSteps = currentSteps + steps;
+                
+                // If it is the current user's profile, update local steps state as well
+                if (userId === state.userId) {
+                    state.steps = newSteps;
+                    saveTodaySteps();
+                    updateDashboardUI();
+                }
+
+                // Write the new steps sum directly to the user's Node in Firebase Realtime DB
+                return update(ref(db, 'users/' + userId), {
+                    steps: newSteps,
+                    lastActive: Date.now()
+                });
+            })
+            .then(() => {
+                showToast('✅ อนุมัติการบันทึกก้าวเดินเรียบร้อย');
+                listenToPendingApprovals();
+            })
+            .catch(err => {
+                console.error("Approval error:", err);
+                showToast('❌ การอนุมัติขัดข้อง');
+            });
+    } else {
+        // Local simulation fallback
+        const mockDb = JSON.parse(localStorage.getItem('stepgo_mock_approvals') || '{}');
+        if (mockDb[id]) {
+            mockDb[id].status = 'approved';
+            localStorage.setItem('stepgo_mock_approvals', JSON.stringify(mockDb));
+            
+            // If it is self, update steps
+            if (userId === state.userId) {
+                addStep(steps);
+            }
+            
+            showToast('✅ [โหมดสาธิต] อนุมัติก้าวเดินเรียบร้อย');
+            listenToPendingApprovals();
+        }
+    }
+}
+
+function rejectApproval(id) {
+    if (!confirm('คุณต้องการปฏิเสธคำขอและลบรูปหลักฐานนี้หรือไม่?')) return;
+    
+    showToast('⏳ กำลังส่งผลการปฏิเสธ...');
+    
+    if (firebaseActive) {
+        update(ref(db, 'approvals/' + id), { status: 'rejected' })
+            .then(() => {
+                showToast('❌ ปฏิเสธหลักฐานเรียบร้อย');
+                listenToPendingApprovals();
+            })
+            .catch(err => {
+                console.error("Rejection error:", err);
+                showToast('❌ การทำงานล้มเหลว');
+            });
+    } else {
+        // Local simulation fallback
+        const mockDb = JSON.parse(localStorage.getItem('stepgo_mock_approvals') || '{}');
+        if (mockDb[id]) {
+            mockDb[id].status = 'rejected';
+            localStorage.setItem('stepgo_mock_approvals', JSON.stringify(mockDb));
+            
+            showToast('❌ [โหมดสาธิต] ปฏิเสธหลักฐานเรียบร้อย');
+            listenToPendingApprovals();
+        }
+    }
 }
 
 // ----------------------------------------------------
@@ -367,7 +1035,6 @@ function checkSensorAvailability() {
         return;
     }
     
-    // Check if permission is needed (mainly iOS 13+)
     if (typeof DeviceMotionEvent.requestPermission === 'function') {
         elements.sensorPermissionCard.classList.remove('hidden');
         updateSensorStatus('inactive', 'ต้องขอสิทธิ์เข้าใช้งานเซ็นเซอร์ (iOS)');
@@ -476,13 +1143,9 @@ function addStep(count) {
     state.steps += count;
     stepsSinceLastSync += count;
     
-    // Save steps locally
     saveTodaySteps();
-    
-    // UI update
     updateDashboardUI();
     
-    // Check auto sync requirements
     const now = Date.now();
     if (stepsSinceLastSync >= SYNC_STEP_INTERVAL || (now - lastSyncTime > SYNC_TIME_INTERVAL)) {
         syncStepsToFirebase();
@@ -497,28 +1160,23 @@ function addStep(count) {
 
 function toggleTracking() {
     if (state.isTracking) {
-        // Stop Tracking
         state.isTracking = false;
         stopMotionTracking();
         stopTimer();
         
-        // Sync final steps of this session
         syncStepsToFirebase();
         
-        // Update Button UI
         elements.btnToggleTracking.classList.remove('tracking');
         elements.btnToggleTracking.querySelector('.btn-text').innerText = 'เริ่มนับก้าวเดิน';
         elements.btnToggleTracking.querySelector('.btn-icon').setAttribute('data-lucide', 'play');
         lucide.createIcons();
         showToast('⏸️ หยุดนับก้าวชั่วคราว');
     } else {
-        // Start Tracking
         state.isTracking = true;
         startMotionTracking().then(success => {
             if (success !== false) {
                 startTimer();
                 
-                // Update Button UI
                 elements.btnToggleTracking.classList.add('tracking');
                 elements.btnToggleTracking.querySelector('.btn-text').innerText = 'หยุดชั่วคราว';
                 elements.btnToggleTracking.querySelector('.btn-icon').setAttribute('data-lucide', 'pause');

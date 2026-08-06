@@ -12,10 +12,13 @@
     <link rel="apple-touch-icon" href="icons/icon.svg">
     <link rel="manifest" href="manifest.json">
     
-    <!-- Google Fonts & Tailwind-like CSS variables -->
+    <!-- Google Fonts & Typography -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Google Identity Services (OAuth2 for Google Fit) -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
     
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
@@ -38,7 +41,27 @@
             </button>
         </header>
 
-        <!-- Main Dashboard -->
+        <!-- Tab Navigation Menu -->
+        <nav class="tab-navigation glass-card">
+            <button class="tab-btn active" data-tab="tab-live">
+                <i data-lucide="smartphone"></i>
+                <span>นับสด</span>
+            </button>
+            <button class="tab-btn" data-tab="tab-fit">
+                <i data-lucide="activity"></i>
+                <span>Google Fit</span>
+            </button>
+            <button class="tab-btn" data-tab="tab-upload">
+                <i data-lucide="image"></i>
+                <span>ส่งรูป</span>
+            </button>
+            <button class="tab-btn" data-tab="tab-admin">
+                <i data-lucide="shield-check"></i>
+                <span>แอดมิน</span>
+            </button>
+        </nav>
+
+        <!-- Main Dashboard Content -->
         <main class="main-content">
             
             <!-- Sensor Request Banner / Warning -->
@@ -48,98 +71,213 @@
                 </div>
                 <div class="banner-text">
                     <h3>ต้องการเข้าถึงเซ็นเซอร์</h3>
-                    <p>กรุณาอนุญาตการใช้งานเซ็นเซอร์ความเคลื่อนไหวเพื่อเริ่มนับก้าวเดินของคุณ</p>
+                    <p>กรุณาอนุญาตการใช้งานเซ็นเซอร์เพื่อตรวจจับความเคลื่อนไหว</p>
                 </div>
                 <button id="btn-request-permission" class="btn btn-primary btn-sm">
                     <i data-lucide="check"></i> อนุญาตสิทธิ์
                 </button>
             </div>
 
-            <!-- Circular Progress Counter -->
-            <div class="progress-section">
-                <div class="progress-ring-container">
-                    <svg class="progress-ring" width="280" height="280">
-                        <defs>
-                            <linearGradient id="progress-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                                <stop offset="0%" stop-color="#3b82f6" />
-                                <stop offset="50%" stop-color="#8b5cf6" />
-                                <stop offset="100%" stop-color="#ec4899" />
-                            </linearGradient>
-                            <linearGradient id="bg-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                                <stop offset="0%" stop-color="rgba(59, 130, 246, 0.05)" />
-                                <stop offset="100%" stop-color="rgba(236, 72, 153, 0.05)" />
-                            </linearGradient>
-                        </defs>
-                        <!-- Background Circle -->
-                        <circle class="progress-ring__circle-bg" stroke="rgba(255, 255, 255, 0.06)" stroke-width="16" fill="url(#bg-gradient)" r="120" cx="140" cy="140" />
-                        <!-- Progress Circle -->
-                        <circle class="progress-ring__circle" stroke="url(#progress-gradient)" stroke-width="16" stroke-linecap="round" fill="transparent" r="120" cx="140" cy="140" />
-                    </svg>
+            <!-- TAB 1: LIVE TRACKER CONTENT -->
+            <div id="tab-live" class="tab-content-panel">
+                <!-- Circular Progress Counter -->
+                <div class="progress-section">
+                    <div class="progress-ring-container">
+                        <svg class="progress-ring" width="280" height="280">
+                            <defs>
+                                <linearGradient id="progress-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                                    <stop offset="0%" stop-color="#3b82f6" />
+                                    <stop offset="50%" stop-color="#8b5cf6" />
+                                    <stop offset="100%" stop-color="#ec4899" />
+                                </linearGradient>
+                                <linearGradient id="bg-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                                    <stop offset="0%" stop-color="rgba(59, 130, 246, 0.05)" />
+                                    <stop offset="100%" stop-color="rgba(236, 72, 153, 0.05)" />
+                                </linearGradient>
+                            </defs>
+                            <circle class="progress-ring__circle-bg" stroke="rgba(255, 255, 255, 0.06)" stroke-width="16" fill="url(#bg-gradient)" r="120" cx="140" cy="140" />
+                            <circle class="progress-ring__circle" stroke="url(#progress-gradient)" stroke-width="16" stroke-linecap="round" fill="transparent" r="120" cx="140" cy="140" />
+                        </svg>
+                        
+                        <div class="progress-text-container">
+                            <span class="label">วันนี้เดินไปแล้ว</span>
+                            <span id="step-count" class="step-count">0</span>
+                            <span class="goal-label">เป้าหมาย <span id="goal-value">10,000</span> ก้าว</span>
+                        </div>
+                    </div>
                     
-                    <div class="progress-text-container">
-                        <span class="label">วันนี้เดินไปแล้ว</span>
-                        <span id="step-count" class="step-count">0</span>
-                        <span class="goal-label">เป้าหมาย <span id="goal-value">10,000</span> ก้าว</span>
+                    <div class="status-badge-container">
+                        <span id="sensor-status" class="status-badge inactive">
+                            <span class="status-dot"></span>
+                            <span class="status-text">หยุดนับก้าวอยู่</span>
+                        </span>
                     </div>
                 </div>
-                
-                <!-- Sensor Status Badge -->
-                <div class="status-badge-container">
-                    <span id="sensor-status" class="status-badge inactive">
-                        <span class="status-dot"></span>
-                        <span class="status-text">หยุดนับก้าวอยู่</span>
-                    </span>
+
+                <!-- Stats Metrics Grid -->
+                <div class="metrics-grid">
+                    <div class="glass-card metric-card">
+                        <div class="metric-header">
+                            <span class="metric-icon kcal">
+                                <i data-lucide="flame"></i>
+                            </span>
+                            <span class="metric-title">เผาผลาญ</span>
+                        </div>
+                        <div class="metric-value">
+                            <span id="calories-burned">0</span>
+                            <span class="metric-unit">kcal</span>
+                        </div>
+                    </div>
+
+                    <div class="glass-card metric-card">
+                        <div class="metric-header">
+                            <span class="metric-icon km">
+                                <i data-lucide="map-pin"></i>
+                            </span>
+                            <span class="metric-title">ระยะทาง</span>
+                        </div>
+                        <div class="metric-value">
+                            <span id="distance-walked">0.00</span>
+                            <span class="metric-unit">km</span>
+                        </div>
+                    </div>
+
+                    <div class="glass-card metric-card">
+                        <div class="metric-header">
+                            <span class="metric-icon time">
+                                <i data-lucide="timer"></i>
+                            </span>
+                            <span class="metric-title">เวลาที่เดิน</span>
+                        </div>
+                        <div class="metric-value">
+                            <span id="active-time">00:00</span>
+                            <span class="metric-unit">นาที</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Primary Control Action -->
+                <div class="control-actions">
+                    <button id="btn-toggle-tracking" class="btn btn-action-pulse">
+                        <i data-lucide="play" class="btn-icon"></i>
+                        <span class="btn-text">เริ่มนับก้าวเดิน</span>
+                    </button>
                 </div>
             </div>
 
-            <!-- Stats Metrics Grid -->
-            <div class="metrics-grid">
-                <div class="glass-card metric-card">
-                    <div class="metric-header">
-                        <span class="metric-icon kcal">
-                            <i data-lucide="flame"></i>
-                        </span>
-                        <span class="metric-title">เผาผลาญ</span>
+            <!-- TAB 2: GOOGLE FIT INTEGRATION -->
+            <div id="tab-fit" class="tab-content-panel hidden">
+                <div class="glass-card fit-container">
+                    <div class="fit-header">
+                        <div class="fit-brand-icon">
+                            <i data-lucide="google"></i>
+                        </div>
+                        <h3>เชื่อมต่อกับ Google Fit</h3>
+                        <p class="fit-subtitle">นับก้าวจากโทรศัพท์ของคุณในเบื้องหลังอัตโนมัติ โดยระบบจะดึงประวัติการก้าวเดินมาจาก Google Fit โดยตรง</p>
                     </div>
-                    <div class="metric-value">
-                        <span id="calories-burned">0</span>
-                        <span class="metric-unit">kcal</span>
-                    </div>
-                </div>
 
-                <div class="glass-card metric-card">
-                    <div class="metric-header">
-                        <span class="metric-icon km">
-                            <i data-lucide="map-pin"></i>
+                    <div class="fit-status-box" id="fit-status-box">
+                        <span class="fit-status-label">สถานะการเชื่อมต่อ:</span>
+                        <span class="status-badge inactive" id="fit-conn-status">
+                            <span class="status-dot"></span>
+                            <span class="status-text">ยังไม่เชื่อมต่อ</span>
                         </span>
-                        <span class="metric-title">ระยะทาง</span>
                     </div>
-                    <div class="metric-value">
-                        <span id="distance-walked">0.00</span>
-                        <span class="metric-unit">km</span>
-                    </div>
-                </div>
 
-                <div class="glass-card metric-card">
-                    <div class="metric-header">
-                        <span class="metric-icon time">
-                            <i data-lucide="timer"></i>
-                        </span>
-                        <span class="metric-title">เวลาที่เดิน</span>
+                    <div class="fit-actions">
+                        <button id="btn-fit-connect" class="btn btn-primary w-full">
+                            <i data-lucide="log-in"></i> เชื่อมต่อบัญชี Google
+                        </button>
+                        <button id="btn-fit-sync" class="btn btn-secondary w-full hidden">
+                            <i data-lucide="refresh-cw"></i> ซิงค์ยอดก้าววันนี้
+                        </button>
+                        <button id="btn-fit-disconnect" class="btn btn-outline btn-sm w-full hidden">
+                            ตัดการเชื่อมต่อ
+                        </button>
                     </div>
-                    <div class="metric-value">
-                        <span id="active-time">00:00</span>
-                        <span class="metric-unit">นาที</span>
+
+                    <div class="form-group alert-info-box">
+                        <i data-lucide="info"></i>
+                        <p><strong>สำหรับผู้ใช้ iPhone (iOS):</strong> ต้องดาวน์โหลดแอป Google Fit (ฟรี) ลงในไอโฟน และกดยินยอมให้ซิงค์ข้อมูลกับแอปสุขภาพ Apple Health ก่อน จึงจะสามารถดึงยอดก้าวได้</p>
                     </div>
                 </div>
             </div>
 
-            <!-- Primary Control Action -->
-            <div class="control-actions">
-                <button id="btn-toggle-tracking" class="btn btn-action-pulse">
-                    <i data-lucide="play" class="btn-icon"></i>
-                    <span class="btn-text">เริ่มนับก้าวเดิน</span>
-                </button>
+            <!-- TAB 3: SCREENSHOT UPLOAD & APPROVAL QUEUE -->
+            <div id="tab-upload" class="tab-content-panel hidden">
+                <!-- Submit Form -->
+                <div class="glass-card upload-form-container">
+                    <div class="section-header">
+                        <h3><i data-lucide="upload-cloud"></i> อัปโหลดรูปภาพยืนยันก้าว</h3>
+                    </div>
+                    <form id="form-upload-steps" class="upload-form">
+                        <div class="form-group">
+                            <label for="input-upload-steps">จำนวนก้าวที่ต้องการบันทึก</label>
+                            <input type="number" id="input-upload-steps" placeholder="ระบุจำนวนก้าว เช่น 12500" required min="1" max="100000">
+                        </div>
+                        <div class="form-group">
+                            <label for="input-upload-date">วันที่ระบุบนภาพหลักฐาน</label>
+                            <input type="date" id="input-upload-date" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="input-upload-file">ภาพถ่ายหน้าจอแสดงยอดก้าว (Screenshot)</label>
+                            <div class="file-dropzone" id="file-dropzone">
+                                <i data-lucide="image-plus" class="upload-icon"></i>
+                                <span class="dropzone-text">แตะเพื่อเลือกรูปภาพหลักฐาน</span>
+                                <input type="file" id="input-upload-file" accept="image/*" class="file-input" required>
+                            </div>
+                            <div id="preview-container" class="image-preview-box hidden">
+                                <img id="image-preview" src="" alt="หลักฐานนับก้าว">
+                                <button type="button" id="btn-clear-preview" class="btn-clear-img"><i data-lucide="trash-2"></i></button>
+                            </div>
+                        </div>
+                        <button type="submit" id="btn-upload-submit" class="btn btn-primary w-full">
+                            <i data-lucide="send"></i> ส่งให้แอดมินตรวจสอบ
+                        </button>
+                    </form>
+                </div>
+
+                <!-- User's own submission list -->
+                <div class="glass-card my-uploads-container">
+                    <div class="section-header">
+                        <h3><i data-lucide="clock"></i> รายการขออนุมัติของคุณ</h3>
+                    </div>
+                    <div id="my-approvals-list" class="my-approvals-list">
+                        <div class="chart-placeholder">ไม่มีประวัติการส่งคำขอ</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 4: ADMIN APPROVAL PANEL -->
+            <div id="tab-admin" class="tab-content-panel hidden">
+                <!-- Admin Auth View -->
+                <div class="glass-card" id="admin-auth-card">
+                    <div class="modal-header">
+                        <h3><i data-lucide="lock"></i> เข้าสู่ระบบผู้ดูแลระบบ</h3>
+                    </div>
+                    <div class="modal-body">
+                        <div class="form-group">
+                            <label for="input-admin-password">รหัสผ่านแอดมิน</label>
+                            <input type="password" id="input-admin-password" placeholder="ใส่รหัสผ่าน (ค่าเริ่มต้น admin1234)">
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button id="btn-admin-login" class="btn btn-primary w-full">เข้าสู่หน้าแอดมิน</button>
+                    </div>
+                </div>
+
+                <!-- Admin Dashboard View -->
+                <div class="admin-dashboard-view hidden" id="admin-dashboard-view">
+                    <div class="glass-card">
+                        <div class="section-header">
+                            <h3><i data-lucide="list-checks"></i> รายการอนุมัติก้าวเดินคงค้าง</h3>
+                            <button id="btn-admin-logout" class="btn btn-outline btn-sm">ออกจากระบบ</button>
+                        </div>
+                        <div id="admin-pending-list" class="admin-pending-list">
+                            <div class="chart-placeholder">ไม่มีรายการค้างอนุมัติ</div>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <!-- Leaderboard Section -->
@@ -161,16 +299,14 @@
                     <h3><i data-lucide="bar-chart-3"></i> ประวัติย้อนหลัง 7 วัน</h3>
                     <button id="btn-clear-history" class="text-btn">ล้างประวัติ</button>
                 </div>
-                
                 <div class="chart-container">
                     <div class="bar-chart" id="history-chart">
-                        <!-- Chart Bars will be generated dynamically by JS -->
                         <div class="chart-placeholder">ไม่มีข้อมูลประวัติก้าวเดิน</div>
                     </div>
                 </div>
             </section>
 
-            <!-- Simulator Section (For testing on desktop/non-sensor devices) -->
+            <!-- Simulator Section (For testing) -->
             <section class="simulator-section glass-card">
                 <div class="section-header collapsable" id="simulator-toggle">
                     <h3><i data-lucide="cpu"></i> ผู้ช่วยทดสอบระบบ (Simulator)</h3>
@@ -217,7 +353,7 @@
                     </div>
                     <div class="form-group alert-info-box">
                         <i data-lucide="info"></i>
-                        <p>ข้อมูลทั้งหมดจะถูกบันทึกไว้ในเบราว์เซอร์ของเครื่องนี้เท่านั้น (LocalStorage) ไม่มีการเก็บข้อมูลส่วนบุคคลส่งไปยังเซิร์ฟเวอร์ภายนอก</p>
+                        <p>ข้อมูลทั้งหมดจะถูกบันทึกไว้ในเบราว์เซอร์ของเครื่องนี้เท่านั้น (LocalStorage) และแอปจะทำการซิงค์ประวัติออนไลน์ไปยังฐานข้อมูลแบบเรียลไทม์</p>
                     </div>
                 </div>
                 <div class="modal-footer">
